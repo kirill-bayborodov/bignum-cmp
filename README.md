@@ -14,7 +14,7 @@ Also available as a standalone distribution.
 
 ## Features
 
--   **High Performance:** Hand-crafted x86-64 yasm assembly — an ultra-optimized, multithreading-ready engine delivering peak execution speed..
+-   **High Performance:** Hand-crafted x86-64 yasm assembly — an ultra-optimized, multithreading-ready engine delivering peak execution speed.
 -   **Dependency-Free Core:** The core logic has no external runtime dependencies.
 -   **Tests and Benchmarks:** Provides a comprehensive test suite and performance microbenchmarks.
 -   **Automated Builds:** A comprehensive `Makefile` for easy compilation, testing, and benchmarking.
@@ -35,11 +35,11 @@ git clone --recurse-submodules https://github.com/kirill-bayborodov/bignum-cmp.g
 The library provides a single function, declared in `include/bignum_cmp.h`.
 
 ```c
-bignum_status_t bignum_cmp(bignum_t* num, size_t shift_amount );
+bignum_cmp_status_t bignum_cmp(const bignum_t *a, const bignum_t *b);
 ```
--   **`num`**: A pointer to the `bignum_t` structure to be shifted.
--   **`shift_amount`**: The number of bits to shift left.
--   **Returns**: A `bignum_status_t` enum (`BIGNUM_SUCCESS`, `BIGNUM_ERROR_NULL_ARG`, `BIGNUM_ERROR_OVERFLOW`).
+-   **`a`**: A pointer to the `bignum_t` structure to be compared (left operand).
+-   **`b`**: A pointer to the `bignum_t` structure to be compared (right operand).
+-   **Returns**: A `bignum_cmp_status_t` enum (`BIGNUM_CMP_GREATER`, `BIGNUM_CMP_EQ`, `BIGNUM_CMP_LESS`, `BIGNUM_CMP_ERROR_NULL`).
 
 ## How to Build, Test, Install and Use
 

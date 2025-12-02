@@ -96,7 +96,7 @@ REPORT_OPT = --percent-limit 1.0 --sort comm,dso,symbol --symbol-filter=$(PERF_S
 .PHONY: all build lint test bench install dist clean help
 
 all: build
-build: $(OBJ)
+build: $(OBJ) $(OBJECTS)
 
 test: $(TEST_BINS)
 	@echo "Running unit tests (CONFIG=$(CONFIG))..."
@@ -115,10 +115,10 @@ bench: clean $(BENCH_BINS) | $(REPORTS_DIR)
 	@$(RM) $(PERF_DATA_MT)
 	@echo "Reports saved. Temporary perf data removed."
 
-install: $(OBJ) | $(DIST_INCLUDE_DIR) $(DIST_LIB_DIR)
+install: $(OBJ) $(OBJECTS) | $(DIST_INCLUDE_DIR) $(DIST_LIB_DIR)
 	@echo "Installing product to $(DIST_DIR)/ (CONFIG=$(CONFIG))..."
-	@cp $(HEADER) $(DIST_INCLUDE_DIR)/
-	@cp $(OBJ) $(DIST_LIB_DIR)/
+	@cp $(HEADER) $(HEADERS) $(COMMON_INCLUDE_DIR)/* $(DIST_INCLUDE_DIR)/
+	@cp $(OBJ) $(OBJECTS) $(DIST_LIB_DIR)/
 
 dist: clean
 	@echo "Creating single-file header distribution in $(DIST_DIR)/ (CONFIG=$(CONFIG))..."
@@ -127,11 +127,11 @@ dist: clean
 	@$(MAKE) -s build CONFIG=release
 # 2. Удаляем всю лишнюю информацию из объектного файла
 	@echo "Stripping object files, keeping symbol $(LIB_NAME)..."
-	@$(STRIP) --strip-debug $(OBJ) || true; 
-	@$(STRIP) --strip-unneeded $(OBJ) || true; 
+	@$(STRIP) --strip-debug $(OBJ) $(OBJECTS) || true; 
+	@$(STRIP) --strip-unneeded $(OBJ) $(OBJECTS) || true; 
 
 # 3. Создаем статическую библиотеку
-	@$(AR) rcs $(STATIC_LIB) $(OBJ)
+	@$(AR) rcs $(STATIC_LIB) $(OBJ) $(OBJECTS)
 	@$(RL) $(STATIC_LIB)
 	@$(NM) -g --defined-only  $(STATIC_LIB)	 
 # 4. Создаем КОРРЕКТНЫЙ единый заголовочный файл
@@ -191,7 +191,7 @@ $(OBJECTS): $(ASM_SOURCES)
 	)	
 $(BIN_DIR)/%: $(TESTS_DIR)/%.c $(OBJ) $(OBJECTS) | $(BIN_DIR)
 	@$(CC) $(CFLAGS) $< $(OBJECTS) $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
-$(BIN_DIR)/bench_%: $(BENCH_DIR)/bench_%.c | $(BIN_DIR)
+$(BIN_DIR)/bench_%: $(BENCH_DIR)/bench_%.c $(OBJ) $(OBJECTS) | $(BIN_DIR)
 	@$(MAKE) -s build CONFIG=debug
 	@$(CC) $(CFLAGS) -g $< $(OBJECTS) $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
 

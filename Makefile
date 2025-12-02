@@ -180,19 +180,20 @@ dist: clean
 	@ls -l $(DIST_DIR)
 
 # --- Compilation Rules ---
-$(OBJ): $(ASM_SRC)  $(ASM_SOURCES)
-	@echo "Building submodules... (CONFIG=$(CONFIG))... "
-	@$(foreach d,$(OBJ_LIST), \
-	  (echo "\tBuild for $(d) ..." && $(MAKE) -C $(LIBS_DIR)/$(d) -s build CONFIG=release CFLAGS+=-Wl,-z,noexecstack) || echo "\n\t\t⚠️  $(d) не имеет правила build\n"; \
-	)		
+$(OBJ): $(ASM_SRC)
 	@echo "Builds the main object file 'build/$(LIB_NAME).o' (CONFIG=$(CONFIG))..." 
 	@$(MKDIR) $(BUILD_DIR)
 	@$(AS) $(ASFLAGS) -o $@ $<
-$(BIN_DIR)/%: $(TESTS_DIR)/%.c $(OBJ) | $(BIN_DIR)
-	@$(CC) $(CFLAGS) $< $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
+$(OBJECTS): $(ASM_SOURCES)
+	@echo "Building submodules... (CONFIG=$(CONFIG))... "
+	@$(foreach d,$(OBJ_LIST), \
+	  (echo "\tBuild for $(d) ..." && $(MAKE) -C $(LIBS_DIR)/$(d) -s build CONFIG=release CFLAGS+=-Wl,-z,noexecstack) || echo "\n\t\t⚠️  $(d) не имеет правила build\n"; \
+	)	
+$(BIN_DIR)/%: $(TESTS_DIR)/%.c $(OBJ) $(OBJECTS) | $(BIN_DIR)
+	@$(CC) $(CFLAGS) $< $(OBJECTS) $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
 $(BIN_DIR)/bench_%: $(BENCH_DIR)/bench_%.c | $(BIN_DIR)
 	@$(MAKE) -s build CONFIG=debug
-	@$(CC) $(CFLAGS) -g $< $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
+	@$(CC) $(CFLAGS) -g $< $(OBJECTS) $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
 
 # --- Utility Targets ---
 $(BIN_DIR) $(REPORTS_DIR) $(DIST_INCLUDE_DIR) $(DIST_LIB_DIR):

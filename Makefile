@@ -6,9 +6,11 @@ REPORT_NAME ?= current
 
 # --- Calculated Variables --
 REPOSITORY_NAME := $(notdir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
+FAMILY_NAME := $(firstword $(subst -, ,$(REPOSITORY_NAME)))
 LIB_NAME := $(subst -,_,$(notdir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))))
 UPPER_LIB_NAME := $(subst z,Z,$(subst y,Y,$(subst x,X,$(subst w,W,$(subst v,V,$(subst u,U,$(subst t,T,$(subst s,S,$(subst r,R,$(subst q,Q,$(subst p,P,$(subst o,O,$(subst n,N,$(subst m,M,$(subst l,L,$(subst k,K,$(subst j,J,$(subst i,I,$(subst h,H,$(subst g,G,$(subst f,F,$(subst e,E,$(subst d,D,$(subst c,C,$(subst b,B,$(subst a,A,$(LIB_NAME)))))))))))))))))))))))))))
 NP := $(shell nproc | awk '{print $$1}')
+
 
 # --- Tools ---
 CC = gcc
@@ -27,14 +29,25 @@ NM = nm
 SRC_DIR = src
 BUILD_DIR = build
 BIN_DIR = bin
+LIBS_DIR = libs
 TESTS_DIR = tests
 BENCH_DIR = benchmarks
 INCLUDE_DIR = include
-COMMON_INCLUDE_DIR = libs/common/include
-REPORTS_DIR = $(BENCH_DIR)/reports
 DIST_DIR = dist
-DIST_INCLUDE_DIR = $(DIST_DIR)/include
-DIST_LIB_DIR = $(DIST_DIR)/lib
+
+SUBMODULES   := $(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/)))
+COMMON_NAME := $(FAMILY_NAME)-common
+COMMON_DIR  := $(LIBS_DIR)/$(COMMON_NAME)
+COMMON_INCLUDE_DIR := $(COMMON_DIR)/$(INCLUDE_DIR)
+OBJ_LIST := $(filter-out $(COMMON_NAME),$(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/))))
+
+OBJECTS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(BUILD_DIR)/$(subst -,_,$(d)).o)
+ASM_SOURCES := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(SRC_DIR)/$(subst -,_,$(d)).asm)
+HEADERS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(INCLUDE_DIR)/$(subst -,_,$(d)).h)
+
+REPORTS_DIR = $(BENCH_DIR)/reports
+DIST_INCLUDE_DIR = $(DIST_DIR)/$(INCLUDE_DIR)
+DIST_LIB_DIR = $(DIST_DIR)/$(LIBS_DIR)
 
 # --- Source & Target Files ---
 ASM_SRC = $(SRC_DIR)/$(LIB_NAME).asm
@@ -64,6 +77,8 @@ else
     CFLAGS = $(CFLAGS_BASE) -g
     ASFLAGS = $(ASFLAGS_BASE) -g dwarf2
 endif
+
+CFLAGS += -Wl,-z,noexecstack
 
 # --- Perf-specific settings ---
 ASM_LABELS := $(shell grep -E '^[[:space:]]*\.[A-Za-z0-9_].*:' $(ASM_SRC) | sed -E 's/^[[:space:]]*\.([A-Za-z0-9_]+):/\1/; s/[[:space:]]\+/|/g' )
@@ -114,15 +129,13 @@ dist: clean
 	@echo "Stripping object files, keeping symbol $(LIB_NAME)..."
 	@$(STRIP) --strip-debug $(OBJ) || true; 
 	@$(STRIP) --strip-unneeded $(OBJ) || true; 
-	@$(OBJCOPY) --keep-symbol=$(LIB_NAME) --strip-all $(OBJ) "$(OBJ).stripped" || { echo "objcopy failed on $(OBJ)"; exit 1; }; 
-	@mv "$(OBJ).stripped" "$(OBJ)"; 
-	@echo "   symbols now:"; $(NM) -g --defined-only "$(OBJ)" || true; 
 
 # 3. Создаем статическую библиотеку
 	@$(AR) rcs $(STATIC_LIB) $(OBJ)
-	@#$(RL) $(STATIC_LIB) 
+	@$(RL) $(STATIC_LIB)
+	@$(NM) -g --defined-only  $(STATIC_LIB)	 
 # 4. Создаем КОРРЕКТНЫЙ единый заголовочный файл
-	@echo "Generating single-file header..."
+	@echo "\nGenerating single-file header..."
 # 4.1. Начинаем с единого include guard
 	@echo "#ifndef $(UPPER_LIB_NAME)_SINGLE_H" > $(SINGLE_HEADER)
 	@echo "#define $(UPPER_LIB_NAME)_SINGLE_H" >> $(SINGLE_HEADER)
@@ -167,7 +180,11 @@ dist: clean
 	@ls -l $(DIST_DIR)
 
 # --- Compilation Rules ---
-$(OBJ): $(ASM_SRC) 
+$(OBJ): $(ASM_SRC)  $(ASM_SOURCES)
+	@echo "Building submodules... (CONFIG=$(CONFIG))... "
+	@$(foreach d,$(OBJ_LIST), \
+	  (echo "\tBuild for $(d) ..." && $(MAKE) -C $(LIBS_DIR)/$(d) -s build CONFIG=release CFLAGS+=-Wl,-z,noexecstack) || echo "\n\t\t⚠️  $(d) не имеет правила build\n"; \
+	)		
 	@echo "Builds the main object file 'build/$(LIB_NAME).o' (CONFIG=$(CONFIG))..." 
 	@$(MKDIR) $(BUILD_DIR)
 	@$(AS) $(ASFLAGS) -o $@ $<
@@ -191,6 +208,10 @@ lint:
 clean:
 	@echo "Cleaning up build artifacts (build/, bin/, dist/)..."
 	@$(RM) $(BUILD_DIR) $(BIN_DIR) $(DIST_DIR)
+	@echo "Cleaning up submodule artifacts:" ; 	#$(MAKE) -C $(CMP_DIR) -s clean	
+	@$(foreach d,$(OBJ_LIST), \
+	  (printf "%s" "Clean for $(d) : " && $(MAKE) -C $(LIBS_DIR)/$(d) -s clean) || echo "\n\t\t⚠️  $(d) не имеет правила clean\n"; \
+	)
 
 help:
 	@echo "Usage: make <target> [CONFIG=release] [REPORT_NAME=my_report]"
@@ -216,8 +237,13 @@ help:
 .PHONY: show-calc
 show-calc:
 	@echo "REPOSITORY_NAME = $(REPOSITORY_NAME)"
+	@echo "FAMILY_NAME = $(FAMILY_NAME)"	
 	@echo "LIB_NAME = $(LIB_NAME)"
 	@echo "UPPER_LIB_NAME = $(UPPER_LIB_NAME)"	
 	@echo "NP = $(NP)"
 	@echo "ASM_LABELS = $(ASM_LABELS)"
-	@echo "Количество меток: $(words $(ASM_LABELS))"
+	@echo "Количество меток: $(words $(subst |, ,$(ASM_LABELS)))"
+	@echo "OBJECTS = $(OBJECTS)"
+	@echo "ASM_SOURCES = $(ASM_SOURCES)"
+	@echo "HEADERS = $(HEADERS)"			
+	@echo "OBJ = $(OBJ)"

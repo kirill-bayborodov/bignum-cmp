@@ -11,7 +11,6 @@ LIB_NAME := $(subst -,_,$(notdir $(patsubst %/,%,$(dir $(abspath $(lastword $(MA
 UPPER_LIB_NAME := $(subst z,Z,$(subst y,Y,$(subst x,X,$(subst w,W,$(subst v,V,$(subst u,U,$(subst t,T,$(subst s,S,$(subst r,R,$(subst q,Q,$(subst p,P,$(subst o,O,$(subst n,N,$(subst m,M,$(subst l,L,$(subst k,K,$(subst j,J,$(subst i,I,$(subst h,H,$(subst g,G,$(subst f,F,$(subst e,E,$(subst d,D,$(subst c,C,$(subst b,B,$(subst a,A,$(LIB_NAME)))))))))))))))))))))))))))
 NP := $(shell nproc | awk '{print $$1}')
 
-
 # --- Tools ---
 CC = gcc
 AS = yasm
@@ -35,19 +34,19 @@ BENCH_DIR = benchmarks
 INCLUDE_DIR = include
 DIST_DIR = dist
 
-SUBMODULES   := $(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/)))
 COMMON_NAME := $(FAMILY_NAME)-common
 COMMON_DIR  := $(LIBS_DIR)/$(COMMON_NAME)
-COMMON_INCLUDE_DIR := $(COMMON_DIR)/$(INCLUDE_DIR)
-OBJ_LIST := $(filter-out $(COMMON_NAME),$(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/))))
-
-OBJECTS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(BUILD_DIR)/$(subst -,_,$(d)).o)
-ASM_SOURCES := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(SRC_DIR)/$(subst -,_,$(d)).asm)
-HEADERS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(INCLUDE_DIR)/$(subst -,_,$(d)).h)
-
 REPORTS_DIR = $(BENCH_DIR)/reports
 DIST_INCLUDE_DIR = $(DIST_DIR)/$(INCLUDE_DIR)
 DIST_LIB_DIR = $(DIST_DIR)/$(LIBS_DIR)
+
+# Собираем список всех объектных файлов, которые должны войти в библиотеку
+SUBMODULES  := $(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/)))
+SUBMODULES_INCLUDE_DIR := $(foreach d,$(SUBMODULES),$(LIBS_DIR)/$(d)/$(INCLUDE_DIR))
+OBJ_LIST    := $(filter-out $(COMMON_NAME),$(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/))))
+OBJECTS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(BUILD_DIR)/$(subst -,_,$(d)).o)
+ASM_SOURCES := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(SRC_DIR)/$(subst -,_,$(d)).asm)
+HEADERS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(INCLUDE_DIR)/$(subst -,_,$(d)).h)
 
 # --- Source & Target Files ---
 ASM_SRC = $(SRC_DIR)/$(LIB_NAME).asm
@@ -66,7 +65,7 @@ STATIC_LIB = $(DIST_DIR)/lib$(LIB_NAME).a
 SINGLE_HEADER = $(DIST_DIR)/$(LIB_NAME).h
 
 # --- Flags ---
-CFLAGS_BASE = -std=c11 -Wall -Wextra -pedantic -I$(INCLUDE_DIR) -I$(COMMON_INCLUDE_DIR)
+CFLAGS_BASE = -std=c11 -Wall -Wextra -pedantic -I$(INCLUDE_DIR) $(addprefix -I , $(SUBMODULES_INCLUDE_DIR))
 ASFLAGS_BASE = -f elf64
 LDFLAGS = -no-pie -lm
 
@@ -115,68 +114,67 @@ bench: clean $(BENCH_BINS) | $(REPORTS_DIR)
 	@$(RM) $(PERF_DATA_MT)
 	@echo "Reports saved. Temporary perf data removed."
 
-install: $(OBJ) $(OBJECTS) | $(DIST_INCLUDE_DIR) $(DIST_LIB_DIR)
-	@echo "Installing product to $(DIST_DIR)/ (CONFIG=$(CONFIG))..."
-	@cp $(HEADER) $(HEADERS) $(COMMON_INCLUDE_DIR)/* $(DIST_INCLUDE_DIR)/
+install: clean $(OBJ) $(OBJECTS) | $(DIST_INCLUDE_DIR) $(DIST_LIB_DIR)
+	@printf "%s" "Installing product to $(DIST_DIR)/ (CONFIG=$(CONFIG))..."
+	@cp $(HEADER) $(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h)) $(DIST_INCLUDE_DIR)/
 	@cp $(OBJ) $(OBJECTS) $(DIST_LIB_DIR)/
+	@echo "Ok"
+	@tree $(DIST_DIR)/
+# Компилируем тест-раннер в dist, линкуя объектник из dist и тестируем сборку
+	@cp $(TESTS_DIR)/test_$(LIB_NAME)_runner.c $(DIST_DIR)/
+	@$(CC) $(DIST_DIR)/test_$(LIB_NAME)_runner.c  $(DIST_DIR)/$(LIBS_DIR)/*.o -I$(DIST_DIR)/$(INCLUDE_DIR) -o $(DIST_DIR)/test_$(LIB_NAME)_runner -no-pie
+	@$(DIST_DIR)/test_$(LIB_NAME)_runner	
+	@$(RM) $(DIST_DIR)/test_$(LIB_NAME)_runner
 
 dist: clean
 	@echo "Creating single-file header distribution in $(DIST_DIR)/ (CONFIG=$(CONFIG))..."
 	@$(MKDIR) $(DIST_DIR)
 # 1. Собираем объектный файл в release-конфигурации
 	@$(MAKE) -s build CONFIG=release
-# 2. Удаляем всю лишнюю информацию из объектного файла
-	@echo "Stripping object files, keeping symbol $(LIB_NAME)..."
-	@$(STRIP) --strip-debug $(OBJ) $(OBJECTS) || true; 
-	@$(STRIP) --strip-unneeded $(OBJ) $(OBJECTS) || true; 
 
+# 2. Удаляем всю лишнюю информацию из объектного файла
+	@printf "%s" "Stripping object files, keeping symbol $(LIB_NAME)..."
+	@$(STRIP) --strip-debug $(OBJ) $(OBJECTS) || true; 
+	@$(STRIP) --strip-unneeded $(OBJ) $(OBJECTS) || true;  
+	@echo "Ok"
 # 3. Создаем статическую библиотеку
+	@printf "%s" "Create static library lib$(LIB_NAME).a ..."
 	@$(AR) rcs $(STATIC_LIB) $(OBJ) $(OBJECTS)
 	@$(RL) $(STATIC_LIB)
-	@$(NM) -g --defined-only  $(STATIC_LIB)	 
+	@echo "Ok"
+	@$(NM) -g --defined-only  $(STATIC_LIB)		 
 # 4. Создаем КОРРЕКТНЫЙ единый заголовочный файл
-	@echo "\nGenerating single-file header..."
+	@printf "%s"  "Generating single-file header..."
 # 4.1. Начинаем с единого include guard
 	@echo "#ifndef $(UPPER_LIB_NAME)_SINGLE_H" > $(SINGLE_HEADER)
 	@echo "#define $(UPPER_LIB_NAME)_SINGLE_H" >> $(SINGLE_HEADER)
 	@echo "" >> $(SINGLE_HEADER)
 
 # 4.2. Вставляем содержимое bignum.h, но БЕЗ его собственных include guards
-	@echo "/* --- Included from libs/common/include/bignum.h --- */" >> $(SINGLE_HEADER)
+	@echo "/* --- Included from libs/bignum-common/include/bignum.h --- */" >> $(SINGLE_HEADER)
 # sed удаляет строки, содержащие BIGNUM_H
-	@sed '/BIGNUM_H/d' $(COMMON_INCLUDE_DIR)/bignum.h >> $(SINGLE_HEADER)
+	@sed '/BIGNUM_H/d' $(COMMON_DIR)/$(INCLUDE_DIR)/$(FAMILY_NAME).h >> $(SINGLE_HEADER)
 	@echo "" >> $(SINGLE_HEADER)
 
 # 4.3. Вставляем содержимое $(LIB_NAME).h, но БЕЗ его include guards и БЕЗ #include "bignum.h"
 	@echo "/* --- Included from include/$(LIB_NAME).h --- */" >> $(SINGLE_HEADER)
 # sed удаляет строки с BIGNUM_SHIFT_LEFT_H и #include "bignum.h"
-	@sed -e '/$(UPPER_LIB_NAME)_H/d' -e '/#include <bignum.h>/d' $(HEADER) >> $(SINGLE_HEADER)
+	@sed -e '/$(UPPER_LIB_NAME)_H/d' -e '/#include <$(FAMILY_NAME).h>/d' $(HEADER) >> $(SINGLE_HEADER)
 	@echo "" >> $(SINGLE_HEADER)
 
 # 4.4. Закрываем единый include guard
 	@echo "#endif // $(UPPER_LIB_NAME)_SINGLE_H" >> $(SINGLE_HEADER)
-
+	@echo "Ok"
 # 5. Копируем README и LICENSE
 	@cp README.md $(DIST_DIR)/
 	@cp LICENSE $(DIST_DIR)/
-# создаём исходник теста в dist
-	@echo '#include "$(LIB_NAME).h"' > dist/test_dist.c; 
-	@echo '#include <assert.h>' >> dist/test_dist.c; 
-	@echo 'int main() {' >> dist/test_dist.c; 
-	@echo '    bignum_t a = {0};' >> dist/test_dist.c; 
-	@echo '    bignum_t b = {0};' >> dist/test_dist.c; 	
-	@echo '    $(LIB_NAME)(&a, &b);' >> dist/test_dist.c; 
-	@echo '    assert(1);' >> dist/test_dist.c; 
-	@echo '    return 0;' >> dist/test_dist.c; 
-	@echo '}' >> dist/test_dist.c
+# 6. Компилируем тест-раннер в dist, статически линкуя библиотеку из dist и тестируем сборку с библиотекой
+	@cp $(TESTS_DIR)/test_$(LIB_NAME)_runner.c $(DIST_DIR)/
+	@$(CC) $(DIST_DIR)/test_$(LIB_NAME)_runner.c -L$(DIST_DIR) -l$(LIB_NAME) -o $(DIST_DIR)/test_$(LIB_NAME)_runner -no-pie
+	@$(DIST_DIR)/test_$(LIB_NAME)_runner	
+	@$(RM) $(DIST_DIR)/test_$(LIB_NAME)_runner
 
-	
-# опционально: компилируем тест- раннер, статически линкуя библиотеку из dist
-	@$(CC) dist/test_dist.c -Ldist -l$(LIB_NAME) -o dist/test_dist_runner -no-pie
-	@dist/test_dist_runner	
-	@$(RM) dist/test_dist_runner
-	@echo "Distribution created successfully in $(DIST_DIR)/"
-	@echo "Contents:"
+	@echo "Distribution created successfully in $(DIST_DIR)/ "
 	@ls -l $(DIST_DIR)
 
 # --- Compilation Rules ---
@@ -187,7 +185,7 @@ $(OBJ): $(ASM_SRC)
 $(OBJECTS): $(ASM_SOURCES)
 	@echo "Building submodules... (CONFIG=$(CONFIG))... "
 	@$(foreach d,$(OBJ_LIST), \
-	  (echo "\tBuild for $(d) ..." && $(MAKE) -C $(LIBS_DIR)/$(d) -s build CONFIG=release CFLAGS+=-Wl,-z,noexecstack) || echo "\n\t\t⚠️  $(d) не имеет правила build\n"; \
+	  (echo "\tBuild for $(d) ..." && $(MAKE) -C $(LIBS_DIR)/$(d) -s build CONFIG=release CFLAGS+=-Wl,-z,noexecstack) || echo "\n\t\t⚠️  $(d) no rule build\n"; \
 	)	
 $(BIN_DIR)/%: $(TESTS_DIR)/%.c $(OBJ) $(OBJECTS) | $(BIN_DIR)
 	@$(CC) $(CFLAGS) $< $(OBJECTS) $(OBJ) -o $@ $(LDFLAGS) $(if $(filter %_mt,$*),-pthread)
@@ -203,15 +201,15 @@ lint:
 	@echo "Running static analysis on C source files..."
 	@$(CPPCHECK) --std=c11 --enable=all --error-exitcode=1 --suppress=missingIncludeSystem \
 	    --inline-suppr --inconclusive --check-config \
-	    -I$(INCLUDE_DIR) -I$(COMMON_INCLUDE_DIR) \
+	    -I$(INCLUDE_DIR) $(addprefix -I , $(SUBMODULES_INCLUDE_DIR)) \
 	    $(TESTS_DIR)/ $(BENCH_DIR)/ $(DIST_DIR)/
 
 clean:
 	@echo "Cleaning up build artifacts (build/, bin/, dist/)..."
 	@$(RM) $(BUILD_DIR) $(BIN_DIR) $(DIST_DIR)
-	@echo "Cleaning up submodule artifacts:" ; 	#$(MAKE) -C $(CMP_DIR) -s clean	
+	@echo "Cleaning up submodule artifacts:" ;
 	@$(foreach d,$(OBJ_LIST), \
-	  (printf "%s" "Clean for $(d) : " && $(MAKE) -C $(LIBS_DIR)/$(d) -s clean) || echo "\n\t\t⚠️  $(d) не имеет правила clean\n"; \
+	  (printf "%s" "Clean for $(d) : " && $(MAKE) -C $(LIBS_DIR)/$(d) -s clean) || echo "\n\t\t⚠️  $(d) has no rule clean\n"; \
 	)
 
 help:
@@ -219,7 +217,7 @@ help:
 	@echo ""
 	@echo "Main Targets:"
 	@echo "  all/build    Builds the main object file 'build/bignum_shift_left.o'."
-	@echo "  lint       - Running static analysis on C source files"
+	@echo "  lint         Running static analysis on C source files"
 	@echo "  test         Builds and runs all unit tests from the 'tests/' directory."
 	@echo "  bench        Builds and runs performance benchmarks, generating named reports."
 	@echo "  install      Packages the product into the 'dist/' directory for internal use."
@@ -245,6 +243,11 @@ show-calc:
 	@echo "ASM_LABELS = $(ASM_LABELS)"
 	@echo "Количество меток: $(words $(subst |, ,$(ASM_LABELS)))"
 	@echo "OBJECTS = $(OBJECTS)"
+	@echo "OBJ_LIST = $(OBJ_LIST)"	
 	@echo "ASM_SOURCES = $(ASM_SOURCES)"
 	@echo "HEADERS = $(HEADERS)"			
 	@echo "OBJ = $(OBJ)"
+	@echo "SUBMODULES_INCLUDE_DIR = $(SUBMODULES_INCLUDE_DIR)"	
+	@echo "	$(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h))	"
+	@echo "	$(foreach dir,$(DIST_DIR)/$(LIBS_DIR),$(wildcard $(dir)/*.o)) "
+	@echo "	$(wildcard $(DIST_DIR)/$(LIBS_DIR)/*.o) "	

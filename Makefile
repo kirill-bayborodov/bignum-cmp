@@ -51,7 +51,7 @@ HEADERS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(INCLUDE_DIR)/$(subst -
 # --- Source & Target Files ---
 ASM_SRC = $(SRC_DIR)/$(LIB_NAME).asm
 HEADER = $(INCLUDE_DIR)/$(LIB_NAME).h
-OBJ = $(BUILD_DIR)/$(LIB_NAME).o
+OBJ = $(BUILD_DIR)/$(LIB_NAME).o 
 TEST_BINS = $(patsubst $(TESTS_DIR)/%.c, $(BIN_DIR)/%, $(wildcard $(TESTS_DIR)/*.c))
 BENCH_BIN = bench_$(LIB_NAME)
 BENCH_BIN_ST = $(BIN_DIR)/$(BENCH_BIN)
@@ -178,7 +178,7 @@ dist: clean
 	@ls -l $(DIST_DIR)
 
 # --- Compilation Rules ---
-$(OBJ): $(ASM_SRC)
+$(OBJ): $(ASM_SRC) 
 	@echo "Builds the main object file 'build/$(LIB_NAME).o' (CONFIG=$(CONFIG))..." 
 	@$(MKDIR) $(BUILD_DIR)
 	@$(AS) $(ASFLAGS) -o $@ $<
@@ -207,7 +207,7 @@ lint:
 clean:
 	@echo "Cleaning up build artifacts (build/, bin/, dist/)..."
 	@$(RM) $(BUILD_DIR) $(BIN_DIR) $(DIST_DIR)
-	@echo "Cleaning up submodule artifacts:" ;
+	@echo "Cleaning up submodule artifacts:" ; 		
 	@$(foreach d,$(OBJ_LIST), \
 	  (printf "%s" "Clean for $(d) : " && $(MAKE) -C $(LIBS_DIR)/$(d) -s clean) || echo "\n\t\t⚠️  $(d) has no rule clean\n"; \
 	)
@@ -249,5 +249,3 @@ show-calc:
 	@echo "OBJ = $(OBJ)"
 	@echo "SUBMODULES_INCLUDE_DIR = $(SUBMODULES_INCLUDE_DIR)"	
 	@echo "	$(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h))	"
-	@echo "	$(foreach dir,$(DIST_DIR)/$(LIBS_DIR),$(wildcard $(dir)/*.o)) "
-	@echo "	$(wildcard $(DIST_DIR)/$(LIBS_DIR)/*.o) "	

@@ -17,6 +17,7 @@
 ;                         добавлен раздел "Алгоритм", код приведен в полное
 ;                         соответствие с согласованным ABI и QG.
 ;   - rev. 3 (20.11.2025): Removed version control functions and .data section
+;   - rev. 4 (08.06.2026): Исправление критической ошибки в обработке длин и сравнения беззнаковых
 ; -----------------------------------------------------------------------------
 
 section .text
@@ -78,16 +79,18 @@ bignum_cmp:
     test    rsi, rsi
     jz      .error_null
 
+
     ; --- Сравнение длин (len) ---
-    mov     ecx, [rdi + BIGNUM_LEN_OFFSET]  ; ecx = a->len
-    mov     edx, [rsi + BIGNUM_LEN_OFFSET]  ; edx = b->len
-    cmp     ecx, edx
-    jg      .a_is_greater
-    jl      .b_is_greater
+    mov     rcx, [rdi + BIGNUM_LEN_OFFSET]  ; rcx = a->len (64 бита)
+    mov     rdx, [rsi + BIGNUM_LEN_OFFSET]  ; rdx = b->len (64 бита)
+    cmp     rcx, rdx
+    ja      .a_is_greater                   ; беззнаковое больше
+    jb      .b_is_greater                   ; беззнаковое меньше
 
     ; --- Длины равны, проверяем, не равны ли они нулю ---
-    test    ecx, ecx
+    test    rcx, rcx
     jz      .are_equal  ; Если len == 0, числа равны (оба 0)
+
 
     ; --- Цикл сравнения "слов" (limbs) от старшего к младшему ---
 .compare_loop:
@@ -98,8 +101,8 @@ bignum_cmp:
     mov     rbx, [rsi + rcx * 8 - 8]
     
     cmp     rax, rbx
-    jg      .a_is_greater
-    jl      .b_is_greater
+    ja      .a_is_greater
+    jb      .b_is_greater
 
     dec     rcx
     jnz     .compare_loop

@@ -2,7 +2,12 @@
 
 # --- Configurable Variables ---
 CONFIG ?= debug
+# values: auto | yes | no
+USE_ASM ?= auto
 REPORT_NAME ?= current
+
+
+
 
 # --- Calculated Variables --
 REPOSITORY_NAME := $(notdir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
@@ -46,11 +51,29 @@ SUBMODULES_INCLUDE_DIR := $(foreach d,$(SUBMODULES),$(LIBS_DIR)/$(d)/$(INCLUDE_D
 OBJ_LIST    := $(filter-out $(COMMON_NAME),$(patsubst $(LIBS_DIR)/%/,%,$(filter %/,$(wildcard $(LIBS_DIR)/*/))))
 OBJECTS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(BUILD_DIR)/$(subst -,_,$(d)).o)
 ASM_SOURCES := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(SRC_DIR)/$(subst -,_,$(d)).asm)
+C_SOURCES   := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(SRC_DIR)/$(subst -,_,$(d)).c)
 HEADERS     := $(foreach d,$(OBJ_LIST),$(LIBS_DIR)/$(d)/$(INCLUDE_DIR)/$(subst -,_,$(d)).h)
 
+
 # --- Source & Target Files ---
-ASM_SRC = $(SRC_DIR)/$(LIB_NAME).asm
+ASM_SRC := $(SRC_DIR)/$(LIB_NAME).asm
+
+ifeq ($(strip $(USE_ASM)),auto)
+    ifneq ($(wildcard $(ASM_SRC)),)
+        SRC_EXT := asm
+    else
+        SRC_EXT := c
+    endif
+else ifeq ($(strip $(USE_ASM)),yes)
+    SRC_EXT := asm
+else
+    SRC_EXT := c
+endif
+
+C_SRC = $(SRC_DIR)/$(LIB_NAME).$(SRC_EXT)
+
 HEADER = $(INCLUDE_DIR)/$(LIB_NAME).h
+FAMILY_HEADER = $(INCLUDE_DIR)/$(FAMILY_NAME).h
 OBJ = $(BUILD_DIR)/$(LIB_NAME).o 
 TEST_BINS = $(patsubst $(TESTS_DIR)/%.c, $(BIN_DIR)/%, $(wildcard $(TESTS_DIR)/*.c))
 BENCH_BIN = bench_$(LIB_NAME)
@@ -69,7 +92,7 @@ CFLAGS_BASE = -std=c11 -Wall -Wextra -pedantic -I$(INCLUDE_DIR) $(addprefix -I ,
 ASFLAGS_BASE = -f elf64
 LDFLAGS = -no-pie -lm
 
-ifeq ($(CONFIG), release)
+ifeq ($(strip $(CONFIG)), release)
     CFLAGS = $(CFLAGS_BASE) -O2 -march=native
     ASFLAGS = $(ASFLAGS_BASE)
 else
@@ -80,7 +103,12 @@ endif
 CFLAGS += -Wl,-z,noexecstack
 
 # --- Perf-specific settings ---
-ASM_LABELS := $(shell grep -E '^[[:space:]]*\.[A-Za-z0-9_].*:' $(ASM_SRC) | sed -E 's/^[[:space:]]*\.([A-Za-z0-9_]+):/\1/; s/[[:space:]]\+/|/g' )
+# ASM_LABELS := $(shell grep -E '^[[:space:]]*\.[A-Za-z0-9_].*:' $(ASM_SRC) | sed -E 's/^[[:space:]]*\.([A-Za-z0-9_]+):/\1/; s/[[:space:]]\+/|/g' )
+ifeq ($(SRC_EXT),asm)
+ASM_LABELS := $(shell grep -E '^[[:space:]]*\.[A-Za-z0-9_].*:' $(ASM_SRC) 2>/dev/null | sed -E 's/^[[:space:]]*\.([A-Za-z0-9_]+):/\1/; s/[[:space:]]\+/|/g' )
+else
+ASM_LABELS :=
+endif
 space := $(empty) $(empty)
 ASM_LABELS := $(subst $(space),|,$(ASM_LABELS))
 
@@ -150,16 +178,17 @@ dist: clean
 	@echo "#define $(UPPER_LIB_NAME)_SINGLE_H" >> $(SINGLE_HEADER)
 	@echo "" >> $(SINGLE_HEADER)
 
-# 4.2. Вставляем содержимое bignum.h, но БЕЗ его собственных include guards
-	@echo "/* --- Included from libs/bignum-common/include/bignum.h --- */" >> $(SINGLE_HEADER)
-# sed удаляет строки, содержащие BIGNUM_H
-	@sed '/BIGNUM_H/d' $(COMMON_DIR)/$(INCLUDE_DIR)/$(FAMILY_NAME).h >> $(SINGLE_HEADER)
-	@echo "" >> $(SINGLE_HEADER)
-
-# 4.3. Вставляем содержимое $(LIB_NAME).h, но БЕЗ его include guards и БЕЗ #include "bignum.h"
+# 4.2. Вставляем содержимое bignum.h,bignum_common.h но БЕЗ его собственных include guards
+	@if [ -f $(COMMON_DIR)/$(INCLUDE_DIR)/$(FAMILY_NAME).h ]; then \
+	echo "/* --- Included from libs/$(COMMON_NAME)/include/$(FAMILY_NAME).h --- */" >> $(SINGLE_HEADER); \
+	sed -e '/BIGNUM_H/d' -e '/BIGNUM_COMMON_H/d' -e '/#include "$(FAMILY_NAME).h"/d' $(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h)) >> $(SINGLE_HEADER); \
+	echo "" >> $(SINGLE_HEADER); \
+	else \
+	echo "/* --- No family header at $(COMMON_DIR)/$(INCLUDE_DIR)/$(FAMILY_NAME).h — skipped --- */" >> $(SINGLE_HEADER); \
+	fi
+# 4.3. Вставляем содержимое $(LIB_NAME).h, но БЕЗ его include guards и БЕЗ #include "bignum.h" или #include <bignum.h>
 	@echo "/* --- Included from include/$(LIB_NAME).h --- */" >> $(SINGLE_HEADER)
-# sed удаляет строки с BIGNUM_SHIFT_LEFT_H и #include "bignum.h"
-	@sed -e '/$(UPPER_LIB_NAME)_H/d' -e '/#include <$(FAMILY_NAME).h>/d' $(HEADER) >> $(SINGLE_HEADER)
+	@sed -e '/$(UPPER_LIB_NAME)_H/d' -e '/#include <$(FAMILY_NAME).h>/d' -e '/#include "$(FAMILY_NAME).h"/d' $(HEADER) >> $(SINGLE_HEADER)
 	@echo "" >> $(SINGLE_HEADER)
 
 # 4.4. Закрываем единый include guard
@@ -178,10 +207,27 @@ dist: clean
 	@ls -l $(DIST_DIR)
 
 # --- Compilation Rules ---
-$(OBJ): $(ASM_SRC) 
-	@echo "Builds the main object file 'build/$(LIB_NAME).o' (CONFIG=$(CONFIG))..." 
+# правило для сборки из C
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@echo "Compiling C: $< -> $@ (CONFIG=$(CONFIG))..."
 	@$(MKDIR) $(BUILD_DIR)
-	@$(AS) $(ASFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# правило для сборки из ASM
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
+	@echo "Assembling ASM: $< -> $@ (CONFIG=$(CONFIG))..."
+	@$(MKDIR) $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -o $@ $<
+
+$(OBJ): $(C_SRC)
+	@echo "Builds the main object file '$(OBJ)' (CONFIG=$(CONFIG))..."
+	@$(MKDIR) $(BUILD_DIR)
+ifeq ($(SRC_EXT),c)
+	$(CC) $(CFLAGS) -c $(C_SRC) -o $(OBJ)
+else
+	$(AS) $(ASFLAGS) -o $(OBJ) $(C_SRC)
+endif
+
 $(OBJECTS): $(ASM_SOURCES)
 	@echo "Building submodules... (CONFIG=$(CONFIG))... "
 	@$(foreach d,$(OBJ_LIST), \
@@ -202,7 +248,7 @@ lint:
 	@$(CPPCHECK) --std=c11 --enable=all --error-exitcode=1 --suppress=missingIncludeSystem \
 	    --inline-suppr --inconclusive --check-config \
 	    -I$(INCLUDE_DIR) $(addprefix -I , $(SUBMODULES_INCLUDE_DIR)) \
-	    $(TESTS_DIR)/ $(BENCH_DIR)/ $(DIST_DIR)/
+	    $(TESTS_DIR)/ $(BENCH_DIR)/ $(DIST_DIR)/ $(SRC_DIR)/
 
 clean:
 	@echo "Cleaning up build artifacts (build/, bin/, dist/)..."
@@ -242,10 +288,16 @@ show-calc:
 	@echo "NP = $(NP)"
 	@echo "ASM_LABELS = $(ASM_LABELS)"
 	@echo "Количество меток: $(words $(subst |, ,$(ASM_LABELS)))"
+	@echo "OBJ = $(OBJ)"	
 	@echo "OBJECTS = $(OBJECTS)"
 	@echo "OBJ_LIST = $(OBJ_LIST)"	
 	@echo "ASM_SOURCES = $(ASM_SOURCES)"
+	@echo "C_SRC = $(C_SRC)"
+	@echo "HEADER = $(HEADER)"
+	@echo "FAMILY_HEADER = $(FAMILY_HEADER)"	
 	@echo "HEADERS = $(HEADERS)"			
-	@echo "OBJ = $(OBJ)"
+	@echo "SRC_EXT = $(SRC_EXT)"
+	@echo "USE_ASM = $(USE_ASM)"
+	@echo "ASM_SRC = $(ASM_SRC)"	
 	@echo "SUBMODULES_INCLUDE_DIR = $(SUBMODULES_INCLUDE_DIR)"	
 	@echo "	$(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h))	"

@@ -34,6 +34,7 @@
  */
 
 #include "bignum_cmp.h"
+#include <bignum_common.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <stdatomic.h> // Для atomic_int
@@ -53,14 +54,6 @@ typedef struct {
     int thread_id;
 } thread_data_t;
 
-void bignum_init_from_array(bignum_t* bn, const uint64_t* data, int len) {
-    assert(len <= BIGNUM_CAPACITY);
-    memset(bn, 0, sizeof(bignum_t));
-    if (data && len > 0) {
-        memcpy(bn->words, data, len * sizeof(uint64_t));
-    }
-    bn->len = len;
-}
 
 void* thread_func(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;

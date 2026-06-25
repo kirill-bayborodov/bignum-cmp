@@ -1,8 +1,8 @@
 ; -----------------------------------------------------------------------------
 ; @file    bignum_cmp.asm
 ; @author  git@bayborodov.com
-; @version 1.0.0
-; @date    20.11.2025
+; @version 1.0.5
+; @date    25.06.2026
 ;
 ; @brief Ассемблерная реализация модуля сравнения больших чисел (bignum_t).
 ;
@@ -18,6 +18,7 @@
 ;                         соответствие с согласованным ABI и QG.
 ;   - rev. 3 (20.11.2025): Removed version control functions and .data section
 ;   - rev. 4 (08.06.2026): Исправление критической ошибки в обработке длин и сравнения беззнаковых
+;   - rev. 5 (25.06.2026): compact/Conditional-Move/Branchless оптимизированная версия
 ; -----------------------------------------------------------------------------
 
 section .text
@@ -71,57 +72,87 @@ BIGNUM_CMP_ERROR_NULL   equ 0x80000000
 
 global bignum_cmp
 bignum_cmp:
-    push    rbx         ; QG-35.a: Сохраняем callee-saved регистр
-
-    ; --- Проверка на NULL ---
+    ; ============================================================
+    ; Шаг 1. NULL-чек (branchless)
+    ;   al = (a == NULL), cl = (b == NULL)
+    ;   r10d = 1, если хоть один NULL, иначе 0
+    ; ============================================================
+    xor     eax, eax
     test    rdi, rdi
-    jz      .error_null
+    sete    al                          ; al = (a == NULL)
+    mov     r10d, eax
     test    rsi, rsi
-    jz      .error_null
+    sete    al                          ; al = (b == NULL)
+    or      r10d, eax                   ; r10d = 1 если NULL
 
+    ; Подготовим «штраф» NULL в r11d: 0 по умолчанию, INT_MIN если NULL
+    xor     r11d, r11d                  ; r11d = 0
+    mov     ecx, BIGNUM_CMP_ERROR_NULL
+    test    r10d, r10d
+    cmovne  r11d, ecx                   ; r11d = INT_MIN если NULL
 
-    ; --- Сравнение длин (len) ---
-    mov     rcx, [rdi + BIGNUM_LEN_OFFSET]  ; rcx = a->len (64 бита)
-    mov     rdx, [rsi + BIGNUM_LEN_OFFSET]  ; rdx = b->len (64 бита)
-    cmp     rcx, rdx
-    ja      .a_is_greater                   ; беззнаковое больше
-    jb      .b_is_greater                   ; беззнаковое меньше
+    ; ============================================================
+    ; Шаг 2. Если NULL — сразу выходим через .return,
+    ;        где подставим штраф в eax
+    ; ============================================================
+    test    r10d, r10d
+    jnz     .return_null
 
-    ; --- Длины равны, проверяем, не равны ли они нулю ---
-    test    rcx, rcx
-    jz      .are_equal  ; Если len == 0, числа равны (оба 0)
+    ; ============================================================
+    ; Шаг 3. Загрузка длин
+    ; ============================================================
+    mov     r8d, [rdi + BIGNUM_OFFSET_LEN]
+    mov     r9d, [rsi + BIGNUM_OFFSET_LEN]
 
+    ; ============================================================
+    ; Шаг 4. Сравнение длин (branchless)
+    ; ============================================================
+    xor     eax, eax                    ; eax = 0 (накопитель)
+    cmp     r8d, r9d
+    je      .same_len
 
-    ; --- Цикл сравнения "слов" (limbs) от старшего к младшему ---
-.compare_loop:
-    ; rcx содержит текущую длину (от len до 1)
-    ; rdi и rsi - базовые указатели
-    ; Используем rbx как callee-saved для временного хранения
-    mov     rax, [rdi + rcx * 8 - 8]
-    mov     rbx, [rsi + rcx * 8 - 8]
-    
-    cmp     rax, rbx
-    ja      .a_is_greater
-    jb      .b_is_greater
+    ; Длины разные: eax = sign(a.len - b.len)
+    mov     eax, BIGNUM_CMP_GREATER     ; eax = 1
+    mov     ecx, BIGNUM_CMP_LESS        ; ecx = -1
+    cmovl   eax, ecx                    ; eax = -1 если a.len < b.len
+    jmp     .return_ok
 
-    dec     rcx
-    jnz     .compare_loop
+.same_len:
+    ; ============================================================
+    ; Шаг 5. Если len == 0 — оба нуля, возвращаем 0
+    ; ============================================================
+    test    r8d, r8d
+    jz      .return_ok                  ; eax = 0, оба нули
 
-.are_equal:
-    xor     eax, eax    ; return 0
-    jmp     .exit
+    ; ============================================================
+    ; Шаг 6. Пословное сравнение (branchless внутри итерации)
+    ;   ecx — счётчик: len, len-1, ..., 1
+    ;   eax — накопитель: 0, пока длины равны ищем первое различие
+    ; ============================================================
+    mov     ecx, r8d                    ; ecx = len
 
-.a_is_greater:
-    mov     eax, BIGNUM_CMP_GREATER      ; return 1
-    jmp     .exit
+.loop:
+    dec     ecx
+    mov     rdx, [rdi + rcx*8]          ; a->words[i]
+    mov     r8,  [rsi + rcx*8]          ; b->words[i]
+    cmp     rdx, r8
 
-.b_is_greater:
-    mov     eax, BIGNUM_CMP_LESS     ; return -1
-    jmp     .exit
+    ; edx = sign(rdx - r8) в виде 1 / -1 / 0
+    mov     edx, BIGNUM_CMP_GREATER     ; edx = 1
+    mov     r9d, BIGNUM_CMP_LESS        ; r9d = -1
+    cmovb   edx, r9d                    ; edx = -1 если a.words[i] < b.words[i]
+    cmove   edx, eax                    ; edx = 0 если равны (eax тут = 0)
 
-.error_null:
-    mov     eax, BIGNUM_CMP_ERROR_NULL ; return INT_MIN
+    ; Обновляем eax только если он ещё 0 (= длины были равны)
+    test    eax, eax
+    cmove   eax, edx
+    test    ecx, ecx
+    jnz     .loop                       ; счётчик не ноль → следующая итерация
 
-.exit:
-    pop     rbx         ; QG-35.a: Восстанавливаем callee-saved регистр
+    jmp     .return_ok
+
+.return_null:
+    mov     eax, r11d                   ; eax = INT_MIN
+
+.return_ok:
     ret

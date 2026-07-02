@@ -227,19 +227,33 @@ test_helgrind: $(TEST_BINS)
 	echo "=== Summary: $$fail / $$total helgrind runs found races ==="; \
 	test $$fail -eq 0
 
-bench: clean $(BENCH_BINS) | $(REPORTS_DIR)
-	@echo "Running benchmarks for report: $(REPORT_NAME) (CONFIG=$(CONFIG))..."
+# rev.12: clean убран из зависимостей; ST и MT — отдельные таргеты;
+# MT бенмарк собирается с -pthread.
+bench: bench_st bench_mt | $(REPORTS_DIR)
+	@echo ""
+	@echo "Both bench reports written to $(REPORTS_DIR)/"
+	@ls -l $(REPORTS_DIR)/$(REPORT_NAME)_*.txt
+
+bench_st: $(BENCH_BIN_ST)
+	@echo "=== ST benchmark for report: $(REPORT_NAME) (CONFIG=$(CONFIG)) ==="
 	@sudo sysctl -w kernel.perf_event_max_sample_rate=10000 > /dev/null
 	@taskset 0x1 $(PERF) record $(RECORD_OPT) -o $(PERF_DATA_ST) -- $(BENCH_BIN_ST)
 	@$(PERF) report -i $(PERF_DATA_ST) $(REPORT_OPT) --dsos $(BENCH_BIN) --stdio > $(REPORT_FILE_ST)
 	@$(RM) $(PERF_DATA_ST)
+	@echo "ST report: $(REPORT_FILE_ST)"
+
+bench_mt: $(BENCH_BIN_MT)
+	@echo "=== MT benchmark for report: $(REPORT_NAME) (CONFIG=$(CONFIG)) ==="
 	@taskset --cpu-list 1-$(NP) $(PERF) record $(RECORD_OPT) -o $(PERF_DATA_MT) -- $(BENCH_BIN_MT)
-	@$(PERF) report -i $(PERF_DATA_MT) $(REPORT_OPT) --dsos $(BENCH_BIN)_mt  --stdio > $(REPORT_FILE_MT)
+	@$(PERF) report -i $(PERF_DATA_MT) $(REPORT_OPT) --dsos $(BENCH_BIN)_mt --stdio > $(REPORT_FILE_MT)
 	@$(RM) $(PERF_DATA_MT)
-	@echo "Reports saved. Temporary perf data removed."
+	@echo "MT report: $(REPORT_FILE_MT)"
 
 install: clean $(OBJ) $(OBJECTS) | $(DIST_INCLUDE_DIR) $(DIST_LIB_DIR)
 	@printf "%s" "Installing product to $(DIST_DIR)/ (CONFIG=$(CONFIG))..."
+	@if [ -f "$(INCLUDE_DIR)/$(FAMILY_NAME).h" ]; then \
+		cp "$(INCLUDE_DIR)/$(FAMILY_NAME).h" "$(DIST_INCLUDE_DIR)/"; \
+	fi	
 	@cp $(HEADER) $(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h)) $(DIST_INCLUDE_DIR)/
 	@cp $(OBJ) $(OBJECTS) $(DIST_LIB_DIR)/
 	@echo "Ok"
@@ -266,6 +280,10 @@ dist: clean
 	@echo "#ifndef $(UPPER_LIB_NAME)_SINGLE_H" > $(SINGLE_HEADER)
 	@echo "#define $(UPPER_LIB_NAME)_SINGLE_H" >> $(SINGLE_HEADER)
 	@echo "" >> $(SINGLE_HEADER)
+	@if [ -f "$(INCLUDE_DIR)/$(FAMILY_NAME).h" ]; then \
+		echo "/* --- Included from /include/$(FAMILY_NAME).h --- */" >> $(SINGLE_HEADER); \
+		sed -e '/BIGNUM_H/d' "$(INCLUDE_DIR)/$(FAMILY_NAME).h" >> $(SINGLE_HEADER); \
+	fi	
 	@if [ -f $(COMMON_DIR)/$(INCLUDE_DIR)/$(FAMILY_NAME).h ]; then \
 	echo "/* --- Included from libs/$(COMMON_NAME)/include/$(FAMILY_NAME).h --- */" >> $(SINGLE_HEADER); \
 	sed -e '/BIGNUM_H/d' -e '/BIGNUM_COMMON_H/d' -e '/#include "$(FAMILY_NAME).h"/d' $(foreach dir,$(SUBMODULES_INCLUDE_DIR),$(wildcard $(dir)/*.h)) >> $(SINGLE_HEADER); \
@@ -357,6 +375,13 @@ help:
 	@echo "Logs:"
 	@echo "  Sanitizer logs: \$$(BIN_DIR)/sanitize_<test>.log"
 	@echo "  Helgrind logs:  \$$(BIN_DIR)/helgrind_<test>_mt.log"
+	@echo ""
+	@echo "Optimization Cycle Example:"
+	@echo "  1. make bench REPORT_NAME=baseline"
+	@echo "  2. ...edit code..."
+	@echo "  3. make test"
+	@echo "  4. make bench REPORT_NAME=opt_v1"
+	@echo "  5. diff -u benchmarks/reports/baseline_st.txt benchmarks/reports/opt_v1_st.txt"	
 
 show-calc:
 	@echo "REPOSITORY_NAME = $(REPOSITORY_NAME)"

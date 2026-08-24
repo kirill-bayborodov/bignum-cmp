@@ -1,3 +1,6 @@
-[submodule "libs/bignum-common"]
-	path = libs/bignum-common
-	url = https://github.com/kirill-bayborodov/bignum-common.git
+[submodule "bignum-core"]
+	path = bignum-core
+	url = https://github.com/kirill-bayborodov/bignum-core
+[submodule "benchmark-framework"]
+	path = benchmark-framework
+	url = https://github.com/kirill-bayborodov/benchmark-framework

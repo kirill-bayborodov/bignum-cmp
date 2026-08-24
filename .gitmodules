@@ -1,6 +1,6 @@
 [submodule "bignum-core"]
-	path = bignum-core
+	path = libs/bignum-core
 	url = https://github.com/kirill-bayborodov/bignum-core
 [submodule "benchmark-framework"]
-	path = benchmark-framework
+	path = libs/benchmark-framework
 	url = https://github.com/kirill-bayborodov/benchmark-framework

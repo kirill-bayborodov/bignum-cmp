@@ -37,6 +37,7 @@
 #include <bignum_cmp.h>
 #include <bignum_init.h>
 #include <bignum_init_from_array.h>
+#include <bignum_init_u64.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <stdatomic.h> // Для atomic_int
